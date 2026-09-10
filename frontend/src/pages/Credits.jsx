@@ -1,122 +1,510 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Coins,
+  Leaf,
+  TrendingUp,
+  ArrowUpRight,
+  ShieldCheck,
+  RefreshCw,
+  MoreHorizontal,
+  Activity,
+  CheckCircle2,
+} from "lucide-react";
+
 import client from "../api/client";
-import { useAuth } from "../context/AuthContext.jsx";
-import { useWeb3 } from "../context/Web3Context.jsx";
 
 export default function Credits() {
-  const { user } = useAuth();
-  const { address, connect, hasChain, transferOnChain, retireOnChain, transferOffChain, retireOffChain } = useWeb3();
+  const [transactions, setTransactions] = useState([]);
+  const [projects, setProjects] = useState([]);
 
-  const activeAddress = address || user.walletAddress;
-  const [balance, setBalance] = useState(0);
-  const [txs, setTxs] = useState([]);
-  const [xfer, setXfer] = useState({ to: "", amount: "" });
-  const [retireAmt, setRetireAmt] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const loadBalance = () => {
-    if (!activeAddress) return;
-    client.get(`/credits/balance/${activeAddress}`).then((res) => setBalance(res.data.balance));
-  };
-  const loadTxs = () => client.get("/credits/transactions").then((res) => setTxs(res.data.transactions));
-
-  useEffect(() => { loadBalance(); loadTxs(); }, [activeAddress]);
-
-  const doTransfer = async (e) => {
-    e.preventDefault();
-    setBusy(true);
-    setMsg("");
+  const loadCredits = async () => {
     try {
-      if (hasChain) await transferOnChain(xfer.to, Number(xfer.amount));
-      else await transferOffChain(activeAddress, xfer.to, Number(xfer.amount));
-      setMsg("Transfer complete.");
-      setXfer({ to: "", amount: "" });
-      loadBalance();
-      loadTxs();
+      setLoading(true);
+      setError("");
+
+      const [txRes, projectRes] = await Promise.all([
+        client.get("/credits/transactions"),
+        client.get("/projects"),
+      ]);
+
+      setTransactions(txRes.data.transactions || []);
+      setProjects(projectRes.data.projects || []);
     } catch (err) {
-      setMsg(err.response?.data?.message || err.message || "Transfer failed");
+      console.error(err);
+
+      setError(
+        err.response?.data?.message ||
+          "Could not load credit registry data."
+      );
     } finally {
-      setBusy(false);
+      setLoading(false);
     }
   };
 
-  const doRetire = async (e) => {
-    e.preventDefault();
-    setBusy(true);
-    setMsg("");
-    try {
-      if (hasChain) await retireOnChain(Number(retireAmt));
-      else await retireOffChain(activeAddress, Number(retireAmt));
-      setMsg("Credits retired permanently.");
-      setRetireAmt("");
-      loadBalance();
-      loadTxs();
-    } catch (err) {
-      setMsg(err.response?.data?.message || err.message || "Retirement failed");
-    } finally {
-      setBusy(false);
-    }
-  };
+  useEffect(() => {
+    loadCredits();
+  }, []);
+
+  const totalIssued = useMemo(() => {
+    return projects.reduce(
+      (sum, project) =>
+        sum + Number(project.creditsAmount || 0),
+      0
+    );
+  }, [projects]);
+
+  const projectCredits = useMemo(() => {
+    return [...projects]
+      .filter(
+        (project) =>
+          Number(project.creditsAmount || 0) > 0
+      )
+      .sort(
+        (a, b) =>
+          Number(b.creditsAmount || 0) -
+          Number(a.creditsAmount || 0)
+      );
+  }, [projects]);
+
+  const totalTransactions = transactions.length;
+
+  const retiredCredits = transactions.reduce(
+    (sum, transaction) => {
+      const type = String(
+        transaction.type || ""
+      ).toLowerCase();
+
+      if (type.includes("retir")) {
+        return (
+          sum +
+          Number(
+            transaction.amount ||
+              transaction.quantity ||
+              0
+          )
+        );
+      }
+
+      return sum;
+    },
+    0
+  );
+
+  const activeCredits = Math.max(
+    totalIssued - retiredCredits,
+    0
+  );
 
   return (
-    <div className="container" style={{ paddingTop: 28, paddingBottom: 40 }}>
-      <h1>Credits &amp; Wallet</h1>
-      <p style={{ color: "var(--ink-soft)", fontSize: 13.5 }}>
-        {hasChain
-          ? "Transfers and retirement are signed on-chain by your connected MetaMask wallet."
-          : "No chain configured yet — running in off-chain ledger mode (still fully functional for the demo)."}
-      </p>
+    <main className="credits-page">
+      <div className="credits-content">
 
-      {!activeAddress && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <p style={{ marginTop: 0, fontSize: 13 }}>Connect a wallet to see your balance and manage credits.</p>
-          <button onClick={connect} className="btn-primary" style={{ fontSize: 12.5 }}>Connect MetaMask</button>
-        </div>
-      )}
+        {/* HEADER */}
 
-      {activeAddress && (
-        <>
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>Wallet</div>
-            <div className="mono" style={{ fontSize: 13, marginBottom: 8 }}>{activeAddress}</div>
-            <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>Balance</div>
-            <div style={{ fontSize: 26, fontWeight: 700 }}>{balance.toLocaleString()} tCO₂e</div>
-          </div>
-
-          {msg && <div className="card" style={{ marginBottom: 16, fontSize: 13 }}>{msg}</div>}
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-            <form onSubmit={doTransfer} className="card" style={{ display: "grid", gap: 8 }}>
-              <div style={{ fontWeight: 600, fontSize: 13.5 }}>Transfer credits</div>
-              <input required placeholder="To address (0x…)" className="mono" value={xfer.to} onChange={(e) => setXfer({ ...xfer, to: e.target.value })} />
-              <input required type="number" min="1" placeholder="Amount" value={xfer.amount} onChange={(e) => setXfer({ ...xfer, amount: e.target.value })} />
-              <button disabled={busy} type="submit" className="btn-primary" style={{ fontSize: 12.5 }}>Transfer</button>
-            </form>
-
-            <form onSubmit={doRetire} className="card" style={{ display: "grid", gap: 8 }}>
-              <div style={{ fontWeight: 600, fontSize: 13.5 }}>Retire credits</div>
-              <p style={{ fontSize: 11.5, color: "var(--ink-soft)", margin: 0 }}>Permanently destroys credits to claim the environmental benefit.</p>
-              <input required type="number" min="1" placeholder="Amount" value={retireAmt} onChange={(e) => setRetireAmt(e.target.value)} />
-              <button disabled={busy} type="submit" className="btn-alert" style={{ fontSize: 12.5 }}>Retire permanently</button>
-            </form>
-          </div>
-        </>
-      )}
-
-      <div className="card">
-        <div style={{ fontWeight: 600, fontSize: 13.5, marginBottom: 10 }}>Transaction history</div>
-        {txs.length === 0 && <div style={{ fontSize: 12.5, color: "var(--ink-soft)" }}>No transactions yet.</div>}
-        {txs.map((t) => (
-          <div key={t._id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "6px 0", borderBottom: "1px dashed var(--mist)" }}>
-            <span style={{ fontWeight: 600, width: 80 }}>{t.type}</span>
-            <span className="mono" style={{ color: "var(--ink-soft)" }}>
-              {t.from ? t.from.slice(0, 8) : "contract"} → {t.to ? t.to.slice(0, 8) : "burn"}
+        <section className="credits-header">
+          <div>
+            <span className="credits-kicker">
+              CARBON CREDIT REGISTRY
             </span>
-            <span className="mono" style={{ fontWeight: 600 }}>{t.amount.toLocaleString()} tCO₂e</span>
+
+            <h1>
+              Credit oversight
+              <br />
+              <em>& transparency.</em>
+            </h1>
+
+            <p>
+              Review issued carbon credits, project
+              allocations and registry transactions.
+            </p>
           </div>
-        ))}
+
+          <button
+            className="credits-refresh"
+            onClick={loadCredits}
+            disabled={loading}
+          >
+            <RefreshCw
+              size={15}
+              className={
+                loading ? "spin" : ""
+              }
+            />
+
+            Refresh registry
+          </button>
+        </section>
+
+        {/* ERROR */}
+
+        {error && (
+          <div className="credits-error">
+            <span>!</span>
+            {error}
+          </div>
+        )}
+
+        {/* KPI */}
+
+        <section className="credits-overview">
+
+          <CreditStat
+            icon={<Coins size={19} />}
+            label="Total issued"
+            value={totalIssued.toLocaleString()}
+            detail="tCO₂e credits"
+          />
+
+          <CreditStat
+            icon={<Activity size={19} />}
+            label="Active credits"
+            value={activeCredits.toLocaleString()}
+            detail="Available in registry"
+            positive
+          />
+
+          <CreditStat
+            icon={<CheckCircle2 size={19} />}
+            label="Retired credits"
+            value={retiredCredits.toLocaleString()}
+            detail="Permanently retired"
+          />
+
+          <CreditStat
+            icon={<ShieldCheck size={19} />}
+            label="Transactions"
+            value={totalTransactions}
+            detail="Recorded on registry"
+          />
+
+        </section>
+
+        {/* MAIN */}
+
+        <section className="credits-grid">
+
+          {/* PROJECT DISTRIBUTION */}
+
+          <div className="credits-main-card">
+            <div className="credits-card-header">
+              <div>
+                <span className="credits-section-label">
+                  REGISTRY ALLOCATION
+                </span>
+
+                <h2>Credits by project</h2>
+
+                <p>
+                  Carbon credits currently recorded
+                  against registered projects.
+                </p>
+              </div>
+
+              <div className="credits-card-icon">
+                <Leaf size={19} />
+              </div>
+            </div>
+
+            {loading ? (
+              <div className="credits-loading">
+                <RefreshCw
+                  size={18}
+                  className="spin"
+                />
+                Loading registry...
+              </div>
+            ) : projectCredits.length === 0 ? (
+              <div className="credits-empty">
+                <Coins size={23} />
+
+                <strong>
+                  No issued credits yet
+                </strong>
+
+                <span>
+                  Credits will appear here after
+                  projects are approved and issued.
+                </span>
+              </div>
+            ) : (
+              <div className="credit-project-list">
+                {projectCredits.map((project) => {
+                  const amount = Number(
+                    project.creditsAmount || 0
+                  );
+
+                  const percentage =
+                    totalIssued > 0
+                      ? (amount / totalIssued) * 100
+                      : 0;
+
+                  return (
+                    <div
+                      className="credit-project-row"
+                      key={project._id}
+                    >
+                      <div className="credit-project-icon">
+                        <Leaf size={16} />
+                      </div>
+
+                      <div className="credit-project-info">
+                        <strong>
+                          {project.name}
+                        </strong>
+
+                        <span>
+                          {project.location ||
+                            "Location unavailable"}
+                        </span>
+
+                        <div className="credit-progress">
+                          <span
+                            style={{
+                              width: `${Math.min(
+                                percentage,
+                                100
+                              )}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="credit-project-number">
+                        <strong>
+                          {amount.toLocaleString()}
+                        </strong>
+
+                        <span>tCO₂e</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* REGISTRY SUMMARY */}
+
+          <aside className="credits-side-card">
+
+            <div className="credits-side-icon">
+              <ShieldCheck size={22} />
+            </div>
+
+            <span className="credits-section-label">
+              REGISTRY STATUS
+            </span>
+
+            <h2>
+              Transparent
+              <br />
+              carbon accounting.
+            </h2>
+
+            <p>
+              Every credit recorded in the registry is
+              associated with a project and its verification
+              history.
+            </p>
+
+            <div className="credits-side-divider" />
+
+            <CreditSummary
+              label="Registered projects"
+              value={projects.length}
+            />
+
+            <CreditSummary
+              label="Issued credits"
+              value={totalIssued.toLocaleString()}
+            />
+
+            <CreditSummary
+              label="Retired credits"
+              value={retiredCredits.toLocaleString()}
+            />
+
+          </aside>
+        </section>
+
+        {/* TRANSACTIONS */}
+
+        <section className="credits-history-card">
+
+          <div className="credits-card-header">
+            <div>
+              <span className="credits-section-label">
+                ACTIVITY
+              </span>
+
+              <h2>Credit transactions</h2>
+
+              <p>
+                A transparent record of credit activity
+                across the registry.
+              </p>
+            </div>
+
+            <TrendingUp size={20} />
+          </div>
+
+          {loading ? (
+            <div className="credits-loading">
+              <RefreshCw
+                size={18}
+                className="spin"
+              />
+              Loading transactions...
+            </div>
+          ) : transactions.length === 0 ? (
+            <div className="credits-empty">
+              <Activity size={23} />
+
+              <strong>
+                No transactions recorded
+              </strong>
+
+              <span>
+                Registry activity will appear here.
+              </span>
+            </div>
+          ) : (
+            <div className="credits-table">
+
+              <div className="credits-table-head">
+                <span>TRANSACTION</span>
+                <span>PROJECT</span>
+                <span>AMOUNT</span>
+                <span>STATUS</span>
+                <span>DATE</span>
+                <span />
+              </div>
+
+              {transactions.map(
+                (transaction, index) => (
+                  <CreditTransaction
+                    key={
+                      transaction._id ||
+                      transaction.id ||
+                      index
+                    }
+                    transaction={transaction}
+                  />
+                )
+              )}
+
+            </div>
+          )}
+        </section>
       </div>
+    </main>
+  );
+}
+
+/* ========================================================= */
+
+function CreditStat({
+  icon,
+  label,
+  value,
+  detail,
+  positive,
+}) {
+  return (
+    <div className="credit-stat">
+      <div className="credit-stat-top">
+        <div className="credit-stat-icon">
+          {icon}
+        </div>
+
+        {positive && (
+          <span className="credit-stat-trend">
+            <TrendingUp size={12} />
+          </span>
+        )}
+      </div>
+
+      <span>{label}</span>
+
+      <strong>{value}</strong>
+
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+/* ========================================================= */
+
+function CreditSummary({ label, value }) {
+  return (
+    <div className="credit-summary-row">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+/* ========================================================= */
+
+function CreditTransaction({
+  transaction,
+}) {
+  const type =
+    transaction.type ||
+    transaction.action ||
+    "Credit activity";
+
+  const amount = Number(
+    transaction.amount ||
+      transaction.quantity ||
+      0
+  );
+
+  const project =
+    transaction.project?.name ||
+    transaction.projectName ||
+    "Registry transaction";
+
+  const date = transaction.createdAt
+    ? new Date(
+        transaction.createdAt
+      ).toLocaleDateString()
+    : "—";
+
+  return (
+    <div className="credit-transaction-row">
+
+      <div className="transaction-type">
+        <div>
+          <Coins size={15} />
+        </div>
+
+        <strong>{type}</strong>
+      </div>
+
+      <span className="transaction-project">
+        {project}
+      </span>
+
+      <strong className="transaction-amount">
+        {amount.toLocaleString()} tCO₂e
+      </strong>
+
+      <span className="transaction-status">
+        <span />
+        Recorded
+      </span>
+
+      <span className="transaction-date">
+        {date}
+      </span>
+
+      <button className="transaction-more">
+        <MoreHorizontal size={16} />
+      </button>
     </div>
   );
 }

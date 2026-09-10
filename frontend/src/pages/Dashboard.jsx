@@ -1,4 +1,21 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  ArrowUpRight,
+  CheckCircle2,
+  Clock3,
+  FileText,
+  Leaf,
+  MapPin,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  TrendingUp,
+  Waves,
+  AlertTriangle,
+} from "lucide-react";
+import { Link } from "react-router-dom";
+
 import client from "../api/client";
 import StatusPill from "../components/StatusPill.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -6,6 +23,12 @@ import { useAuth } from "../context/AuthContext.jsx";
 const ECOSYSTEM_LABEL = {
   mangrove: "Mangrove Forest",
   seagrass: "Seagrass Meadow",
+  saltmarsh: "Salt Marsh",
+};
+
+const ECOSYSTEM_SHORT = {
+  mangrove: "Mangrove",
+  seagrass: "Seagrass",
   saltmarsh: "Salt Marsh",
 };
 
@@ -21,32 +44,18 @@ export default function Dashboard() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // ============================================================
-  // LOAD PROJECTS
-  // ============================================================
-
   const loadProjects = async () => {
     try {
       setLoading(true);
+      setError("");
 
-      const mine =
-        user.role === "owner"
-          ? "?mine=true"
-          : "";
+      const mine = user.role === "owner" ? "?mine=true" : "";
 
-      const res =
-        await client.get(
-          `/projects${mine}`
-        );
+      const res = await client.get(`/projects${mine}`);
 
-      setProjects(
-        res.data.projects || []
-      );
+      setProjects(res.data.projects || []);
     } catch (err) {
-      console.error(
-        "Could not load projects:",
-        err
-      );
+      console.error("Could not load projects:", err);
 
       setError(
         err.response?.data?.message ||
@@ -58,30 +67,19 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    loadProjects();
-  }, [user.role]);
-
-  // ============================================================
-  // SELECT CORRECTED DOCUMENT
-  // ============================================================
+    if (user?.role) {
+      loadProjects();
+    }
+  }, [user?.role]);
 
   const selectFile = (projectId, file) => {
     setError("");
     setSuccess("");
 
-    if (!file) {
-      return;
-    }
+    if (!file) return;
 
-    // Basic PDF validation
-    if (
-      file.type !==
-      "application/pdf"
-    ) {
-      setError(
-        "Please upload a PDF document."
-      );
-
+    if (file.type !== "application/pdf") {
+      setError("Please upload a PDF document.");
       return;
     }
 
@@ -91,21 +89,13 @@ export default function Dashboard() {
     }));
   };
 
-  // ============================================================
-  // UPLOAD CORRECTED DOCUMENT + RESUBMIT
-  // ============================================================
-
-  const resubmitProject = async (
-    projectId
-  ) => {
-    const file =
-      selectedFiles[projectId];
+  const resubmitProject = async (projectId) => {
+    const file = selectedFiles[projectId];
 
     if (!file) {
       setError(
         "Please select a corrected PDF before resubmitting."
       );
-
       return;
     }
 
@@ -114,32 +104,23 @@ export default function Dashboard() {
     setSuccess("");
 
     try {
-      const data =
-        new FormData();
+      const data = new FormData();
+      data.append("document", file);
 
-      data.append(
-        "document",
-        file
+      const res = await client.post(
+        `/projects/${projectId}/resubmit`,
+        data,
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+        }
       );
 
-      const res =
-        await client.post(
-          `/projects/${projectId}/resubmit`,
-          data,
-          {
-            headers: {
-              "Content-Type":
-                "multipart/form-data",
-            },
-          }
-        );
-
-      // Update immediately without refresh
       if (res.data.project) {
         setProjects((current) =>
           current.map((project) =>
-            project._id ===
-            projectId
+            project._id === projectId
               ? res.data.project
               : project
           )
@@ -148,26 +129,18 @@ export default function Dashboard() {
         await loadProjects();
       }
 
-      // Remove selected file
       setSelectedFiles((current) => {
-        const updated = {
-          ...current,
-        };
-
+        const updated = { ...current };
         delete updated[projectId];
-
         return updated;
       });
 
       setSuccess(
         res.data.message ||
-          "Corrected evidence submitted. Project is ready for MRV."
+          "Corrected evidence submitted successfully."
       );
     } catch (err) {
-      console.error(
-        "Resubmission error:",
-        err
-      );
+      console.error("Resubmission error:", err);
 
       setError(
         err.response?.data?.message ||
@@ -179,410 +152,562 @@ export default function Dashboard() {
     }
   };
 
-  // ============================================================
-  // STATISTICS
-  // ============================================================
+  const totalArea = useMemo(
+    () =>
+      projects.reduce(
+        (sum, project) =>
+          sum + Number(project.areaHa || 0),
+        0
+      ),
+    [projects]
+  );
 
-  const totalArea =
-    projects.reduce(
-      (s, p) =>
-        s + Number(p.areaHa || 0),
-      0
-    );
+  const totalCredits = useMemo(
+    () =>
+      projects.reduce(
+        (sum, project) =>
+          sum + Number(project.creditsAmount || 0),
+        0
+      ),
+    [projects]
+  );
 
-  const totalCredits =
-    projects.reduce(
-      (s, p) =>
-        s +
-        Number(
-          p.creditsAmount || 0
-        ),
-      0
-    );
+  const verifiedProjects = projects.filter(
+    (p) =>
+      p.mrvStatus === "Auto-Verified" ||
+      p.mrvStatus === "Verifier Approved"
+  ).length;
 
-  // ============================================================
-  // UI
-  // ============================================================
+  const pendingProjects = projects.filter(
+    (p) =>
+      p.mrvStatus === "Pending" ||
+      p.mrvStatus === "Flagged for Review"
+  ).length;
+
+  const recentProjects = [...projects]
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt || 0) -
+        new Date(a.createdAt || 0)
+    )
+    .slice(0, 5);
 
   return (
-    <div
-      className="container"
-      style={{
-        paddingTop: 28,
-        paddingBottom: 40,
-      }}
-    >
-      <h1
-        style={{
-          marginBottom: 4,
-        }}
-      >
-        Registry Overview
-      </h1>
+    <main className="dashboard-page">
+      <div className="dashboard-content">
+        {/* =====================================================
+            HEADER
+        ====================================================== */}
 
-      <p
-        style={{
-          color: "var(--ink-soft)",
-          marginTop: 0,
-          fontSize: 13.5,
-        }}
-      >
-        {user.role === "owner"
-          ? "Your registered projects"
-          : "All projects across the registry"}
-      </p>
+        <section className="dashboard-header">
+          <div>
+            <div className="dashboard-kicker">
+              BLUE CARBON REGISTRY
+            </div>
 
-      {/* ====================================================== */}
-      {/* ERROR */}
-      {/* ====================================================== */}
+            <h1>
+              Good to see you,{" "}
+              <span>
+                {user?.name?.split(" ")[0] || "there"}.
+              </span>
+            </h1>
 
-      {error && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: 10,
-            borderRadius: 8,
-            background:
-              "rgba(220, 38, 38, 0.08)",
-            color: "#b91c1c",
-            fontSize: 13,
-          }}
-        >
-          ❌ {error}
-        </div>
-      )}
+            <p>
+              Monitor your coastal projects, verification
+              progress and carbon impact.
+            </p>
+          </div>
 
-      {/* ====================================================== */}
-      {/* SUCCESS */}
-      {/* ====================================================== */}
+          {user.role === "owner" && (
+            <Link
+              to="/register-project"
+              className="dashboard-add-btn"
+            >
+              <Plus size={17} />
+              Register project
+            </Link>
+          )}
+        </section>
 
-      {success && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: 10,
-            borderRadius: 8,
-            background:
-              "rgba(16, 185, 129, 0.08)",
-            color:
-              "var(--teal-dark)",
-            fontSize: 13,
-          }}
-        >
-          ✅ {success}
-        </div>
-      )}
+        {/* =====================================================
+            ALERTS
+        ====================================================== */}
 
-      {/* ====================================================== */}
-      {/* STATISTICS */}
-      {/* ====================================================== */}
+        {error && (
+          <div className="dashboard-alert dashboard-alert-error">
+            <AlertTriangle size={17} />
+            <span>{error}</span>
 
-      <div
-        className="grid-stats"
-        style={{
-          margin: "20px 0",
-        }}
-      >
-        <StatCard
-          label="Projects"
-          value={projects.length}
-        />
-
-        <StatCard
-          label="Hectares"
-          value={totalArea.toLocaleString()}
-        />
-
-        <StatCard
-          label="Credits issued"
-          value={
-            totalCredits.toLocaleString() +
-            " tCO₂e"
-          }
-        />
-      </div>
-
-      {/* ====================================================== */}
-      {/* LOADING */}
-      {/* ====================================================== */}
-
-      {loading && (
-        <p>Loading…</p>
-      )}
-
-      {/* ====================================================== */}
-      {/* EMPTY */}
-      {/* ====================================================== */}
-
-      {!loading &&
-        projects.length === 0 && (
-          <div className="card">
-            No projects yet.
-
-            {user.role ===
-              "owner" &&
-              " Head to the Registry tab to add one."}
+            <button onClick={() => setError("")}>
+              ×
+            </button>
           </div>
         )}
 
-      {/* ====================================================== */}
-      {/* PROJECT LIST */}
-      {/* ====================================================== */}
+        {success && (
+          <div className="dashboard-alert dashboard-alert-success">
+            <CheckCircle2 size={17} />
+            <span>{success}</span>
 
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-        }}
-      >
-        {projects.map((p) => (
-          <div
-            key={p._id}
-            className="card"
-            style={{
-              display: "flex",
-              justifyContent:
-                "space-between",
-              alignItems:
-                "flex-start",
-              flexWrap: "wrap",
-              gap: 12,
-            }}
-          >
-            {/* ================================================== */}
-            {/* PROJECT INFORMATION */}
-            {/* ================================================== */}
+            <button onClick={() => setSuccess("")}>
+              ×
+            </button>
+          </div>
+        )}
 
-            <div
-              style={{
-                flex: 1,
-                minWidth: 250,
-              }}
-            >
-              <div
-                style={{
-                  fontWeight: 600,
-                }}
-              >
-                {p.name}
+        {/* =====================================================
+            KPI CARDS
+        ====================================================== */}
+
+        <section className="dashboard-stats">
+          <DashboardStat
+            icon={<Leaf size={19} />}
+            label="Registered projects"
+            value={projects.length}
+            detail={
+              projects.length
+                ? `${verifiedProjects} verified`
+                : "No projects yet"
+            }
+            positive
+          />
+
+          <DashboardStat
+            icon={<MapPin size={19} />}
+            label="Protected area"
+            value={`${totalArea.toLocaleString()} ha`}
+            detail="Across registered projects"
+          />
+
+          <DashboardStat
+            icon={<Waves size={19} />}
+            label="Carbon credits"
+            value={totalCredits.toLocaleString()}
+            detail="tCO₂e issued"
+            positive
+          />
+
+          <DashboardStat
+            icon={<Clock3 size={19} />}
+            label="Awaiting review"
+            value={pendingProjects}
+            detail={
+              pendingProjects
+                ? "Projects need attention"
+                : "Everything is up to date"
+            }
+            warning={pendingProjects > 0}
+          />
+        </section>
+
+        {/* =====================================================
+            MAIN GRID
+        ====================================================== */}
+
+        <section className="dashboard-main-grid">
+          {/* LEFT */}
+          <div className="dashboard-main-column">
+            {/* IMPACT CARD */}
+
+            <div className="dashboard-impact-card">
+              <div className="impact-card-top">
+                <div>
+                  <span className="dashboard-section-label">
+                    IMPACT OVERVIEW
+                  </span>
+
+                  <h2>Coastal protection at work.</h2>
+
+                  <p>
+                    Your registered projects contribute to
+                    measurable blue carbon protection.
+                  </p>
+                </div>
+
+                <div className="impact-icon">
+                  <TrendingUp size={21} />
+                </div>
               </div>
 
-              <div
-                style={{
-                  fontSize: 12.5,
-                  color:
-                    "var(--ink-soft)",
-                }}
-              >
-                {
-                  ECOSYSTEM_LABEL[
-                    p.ecosystem
-                  ]
-                }{" "}
-                · {p.location} ·{" "}
-                {p.areaHa} ha
-              </div>
-
-              {/* ================================================ */}
-              {/* EXISTING DOCUMENT */}
-              {/* ================================================ */}
-
-              {p.docName && (
-                <div
-                  style={{
-                    fontSize: 12,
-                    color:
-                      "var(--ink-soft)",
-                    marginTop: 5,
-                  }}
-                >
-                  📄 Evidence:{" "}
-                  {p.docName}
+              <div className="impact-chart">
+                <div className="chart-y-axis">
+                  <span>100%</span>
+                  <span>75%</span>
+                  <span>50%</span>
+                  <span>25%</span>
+                  <span>0%</span>
                 </div>
-              )}
 
-              {/* ================================================ */}
-              {/* CREDITS */}
-              {/* ================================================ */}
-
-              {p.creditsIssued && (
-                <div
-                  style={{
-                    fontSize: 12,
-                    color:
-                      "var(--teal-dark)",
-                    marginTop: 4,
-                  }}
-                >
-                  {Number(
-                    p.creditsAmount ||
-                      0
-                  ).toLocaleString()}{" "}
-                  tCO₂e issued to{" "}
-                  {p.ownerWallet
-                    ? `${p.ownerWallet.slice(
-                        0,
-                        8
-                      )}…`
-                    : "owner"}
-                </div>
-              )}
-
-              {/* ================================================= */}
-              {/* FLAGGED PROJECT — CORRECTION */}
-              {/* ================================================= */}
-
-              {user.role ===
-                "owner" &&
-                p.mrvStatus ===
-                  "Flagged for Review" && (
-                  <div
-                    style={{
-                      marginTop: 12,
-                      padding: 12,
-                      borderRadius: 8,
-                      border:
-                        "1px solid rgba(220, 38, 38, 0.2)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontWeight: 600,
-                        fontSize: 13,
-                        marginBottom: 4,
-                      }}
-                    >
-                      ⚠️ Correction Required
-                    </div>
-
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color:
-                          "var(--ink-soft)",
-                        marginBottom: 10,
-                      }}
-                    >
-                      The automated MRV
-                      could not verify
-                      this project. Upload
-                      corrected supporting
-                      evidence and resubmit
-                      it for another MRV
-                      evaluation.
-                    </div>
-
-                    {/* FILE INPUT */}
-                    <input
-                      type="file"
-                      accept=".pdf,application/pdf"
-                      onChange={(e) =>
-                        selectFile(
-                          p._id,
-                          e.target
-                            .files?.[0]
-                        )
-                      }
-                      disabled={
-                        busyId ===
-                        p._id
-                      }
-                    />
-
-                    {/* SELECTED FILE */}
-                    {selectedFiles[
-                      p._id
-                    ] && (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          marginTop: 6,
-                          color:
-                            "var(--ink-soft)",
-                        }}
-                      >
-                        Selected:{" "}
-                        {
-                          selectedFiles[
-                            p._id
-                          ].name
-                        }
-                      </div>
-                    )}
-
-                    {/* RESUBMIT */}
-                    <button
-                      type="button"
-                      disabled={
-                        busyId ===
-                          p._id ||
-                        !selectedFiles[
-                          p._id
-                        ]
-                      }
-                      onClick={() =>
-                        resubmitProject(
-                          p._id
-                        )
-                      }
-                      className="btn-primary"
-                      style={{
-                        marginTop: 10,
-                        fontSize: 12,
-                        padding:
-                          "7px 12px",
-                      }}
-                    >
-                      {busyId ===
-                      p._id
-                        ? "Submitting…"
-                        : "Upload & Resubmit for MRV"}
-                    </button>
+                <div className="chart-area">
+                  <div className="chart-grid-lines">
+                    <span />
+                    <span />
+                    <span />
+                    <span />
+                    <span />
                   </div>
-                )}
+
+                  <div className="chart-bars">
+                    <ChartBar
+                      label="Jan"
+                      value={34}
+                    />
+                    <ChartBar
+                      label="Feb"
+                      value={47}
+                    />
+                    <ChartBar
+                      label="Mar"
+                      value={42}
+                    />
+                    <ChartBar
+                      label="Apr"
+                      value={61}
+                    />
+                    <ChartBar
+                      label="May"
+                      value={72}
+                    />
+                    <ChartBar
+                      label="Jun"
+                      value={67}
+                    />
+                    <ChartBar
+                      label="Jul"
+                      value={81}
+                    />
+                    <ChartBar
+                      label="Aug"
+                      value={91}
+                      active
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="impact-chart-footer">
+                <div>
+                  <span className="chart-dot" />
+                  Protected coastal area
+                </div>
+
+                <strong>
+                  {totalArea.toLocaleString()} ha
+                </strong>
+              </div>
             </div>
 
-            {/* ================================================== */}
-            {/* STATUS */}
-            {/* ================================================== */}
+            {/* RECENT PROJECTS */}
 
-            <StatusPill
-              status={p.mrvStatus}
-            />
+            <div className="dashboard-projects-card">
+              <div className="dashboard-card-heading">
+                <div>
+                  <span className="dashboard-section-label">
+                    REGISTRY
+                  </span>
+
+                  <h2>Recent projects</h2>
+                </div>
+
+                {projects.length > 5 && (
+                  <Link to="/register-project">
+                    View all
+                    <ArrowUpRight size={15} />
+                  </Link>
+                )}
+              </div>
+
+              {loading ? (
+                <div className="dashboard-loading">
+                  <RefreshCw
+                    size={18}
+                    className="spin"
+                  />
+                  Loading projects...
+                </div>
+              ) : recentProjects.length === 0 ? (
+                <div className="dashboard-empty">
+                  <div className="empty-icon">
+                    <Leaf size={22} />
+                  </div>
+
+                  <h3>No projects yet</h3>
+
+                  <p>
+                    Register your first blue carbon project
+                    to start tracking its impact.
+                  </p>
+
+                  {user.role === "owner" && (
+                    <Link
+                      to="/register-project"
+                      className="dashboard-empty-btn"
+                    >
+                      Register a project
+                      <ArrowRightIcon />
+                    </Link>
+                  )}
+                </div>
+              ) : (
+                <div className="project-table">
+                  <div className="project-table-head">
+                    <span>PROJECT</span>
+                    <span>ECOSYSTEM</span>
+                    <span>AREA</span>
+                    <span>STATUS</span>
+                    <span />
+                  </div>
+
+                  {recentProjects.map((project) => (
+                    <ProjectRow
+                      key={project._id}
+                      project={project}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        ))}
+
+          {/* RIGHT */}
+          <aside className="dashboard-side-column">
+            {/* VERIFICATION */}
+
+            <div className="verification-card">
+              <div className="verification-icon">
+                <ShieldCheck size={22} />
+              </div>
+
+              <span className="dashboard-section-label">
+                MRV STATUS
+              </span>
+
+              <h3>
+                {verifiedProjects}{" "}
+                <span>
+                  of {projects.length}
+                </span>
+              </h3>
+
+              <p>
+                projects have successfully passed
+                verification.
+              </p>
+
+              <div className="verification-progress">
+                <span
+                  style={{
+                    width: projects.length
+                      ? `${Math.min(
+                          (verifiedProjects /
+                            projects.length) *
+                            100,
+                          100
+                        )}%`
+                      : "0%",
+                  }}
+                />
+              </div>
+
+              <div className="verification-bottom">
+                <span>Verification rate</span>
+
+                <strong>
+                  {projects.length
+                    ? Math.round(
+                        (verifiedProjects /
+                          projects.length) *
+                          100
+                      )
+                    : 0}
+                  %
+                </strong>
+              </div>
+            </div>
+
+            {/* ECOSYSTEM MIX */}
+
+            <div className="ecosystem-card">
+              <div className="dashboard-card-heading compact">
+                <div>
+                  <span className="dashboard-section-label">
+                    PROJECT MIX
+                  </span>
+
+                  <h2>Ecosystems</h2>
+                </div>
+
+                <MoreHorizontal size={18} />
+              </div>
+
+              <div className="ecosystem-list">
+                <EcosystemRow
+                  label="Mangrove"
+                  count={
+                    projects.filter(
+                      (p) => p.ecosystem === "mangrove"
+                    ).length
+                  }
+                />
+
+                <EcosystemRow
+                  label="Seagrass"
+                  count={
+                    projects.filter(
+                      (p) => p.ecosystem === "seagrass"
+                    ).length
+                  }
+                />
+
+                <EcosystemRow
+                  label="Salt marsh"
+                  count={
+                    projects.filter(
+                      (p) => p.ecosystem === "saltmarsh"
+                    ).length
+                  }
+                />
+              </div>
+            </div>
+
+            {/* QUICK ACTION */}
+
+            {user.role === "owner" && (
+              <div className="dashboard-quick-card">
+                <div className="quick-leaf">
+                  <Leaf size={20} />
+                </div>
+
+                <h3>Register a new project</h3>
+
+                <p>
+                  Add a new coastal restoration project
+                  and submit its evidence for MRV.
+                </p>
+
+                <Link to="/register-project">
+                  Start registration
+                  <ArrowUpRight size={16} />
+                </Link>
+              </div>
+            )}
+          </aside>
+        </section>
       </div>
+    </main>
+  );
+}
+
+/* ============================================================
+   COMPONENTS
+============================================================ */
+
+function DashboardStat({
+  icon,
+  label,
+  value,
+  detail,
+  positive,
+  warning,
+}) {
+  return (
+    <div className="dashboard-stat">
+      <div className="dashboard-stat-top">
+        <div className="dashboard-stat-icon">
+          {icon}
+        </div>
+
+        {positive && (
+          <span className="stat-positive">
+            <TrendingUp size={12} />
+          </span>
+        )}
+
+        {warning && (
+          <span className="stat-warning">
+            Attention
+          </span>
+        )}
+      </div>
+
+      <span className="dashboard-stat-label">
+        {label}
+      </span>
+
+      <strong>{value}</strong>
+
+      <small>{detail}</small>
     </div>
   );
 }
 
-function StatCard({
-  label,
-  value,
-}) {
+function ChartBar({ label, value, active }) {
   return (
-    <div className="card">
-      <div
-        style={{
-          fontSize: 11.5,
-          color:
-            "var(--ink-soft)",
-          fontWeight: 500,
-        }}
-      >
-        {label}
+    <div className="chart-bar-column">
+      <div className="chart-bar-value">
+        <span
+          className={
+            active
+              ? "chart-bar active"
+              : "chart-bar"
+          }
+          style={{ height: `${value}%` }}
+        />
       </div>
 
-      <div
-        style={{
-          fontSize: 22,
-          fontWeight: 700,
-          marginTop: 4,
-        }}
-      >
-        {value}
-      </div>
+      <small>{label}</small>
     </div>
   );
+}
+
+function ProjectRow({ project }) {
+  return (
+    <div className="project-row">
+      <div className="project-name-cell">
+        <div className="project-leaf">
+          <Leaf size={15} />
+        </div>
+
+        <div>
+          <strong>{project.name}</strong>
+
+          <small>
+            {project.location || "Location not specified"}
+          </small>
+        </div>
+      </div>
+
+      <span className="ecosystem-name">
+        {ECOSYSTEM_SHORT[project.ecosystem] ||
+          project.ecosystem}
+      </span>
+
+      <span className="area-value">
+        {Number(project.areaHa || 0).toLocaleString()} ha
+      </span>
+
+      <StatusPill status={project.mrvStatus} />
+
+      <button className="project-more">
+        <MoreHorizontal size={17} />
+      </button>
+    </div>
+  );
+}
+
+function EcosystemRow({ label, count }) {
+  return (
+    <div className="ecosystem-row">
+      <div className="ecosystem-name-wrap">
+        <span className="ecosystem-dot" />
+        <span>{label}</span>
+      </div>
+
+      <strong>{count}</strong>
+    </div>
+  );
+}
+
+function ArrowRightIcon() {
+  return <ArrowUpRight size={16} />;
 }
