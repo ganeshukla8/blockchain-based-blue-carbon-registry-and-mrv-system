@@ -1,664 +1,510 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Coins,
+  Leaf,
+  TrendingUp,
+  ArrowUpRight,
+  ShieldCheck,
+  RefreshCw,
+  MoreHorizontal,
+  Activity,
+  CheckCircle2,
+} from "lucide-react";
+
 import client from "../api/client";
-import StatusPill from "../components/StatusPill.jsx";
-import { useAuth } from "../context/AuthContext.jsx";
 
-const RATES = {
-  mangrove: 6.2,
-  seagrass: 3.7,
-  saltmarsh: 2.9,
-};
-
-export default function MrvVerification() {
-  const { user } = useAuth();
-
+export default function Credits() {
+  const [transactions, setTransactions] = useState([]);
   const [projects, setProjects] = useState([]);
-  const [busyId, setBusyId] = useState(null);
+
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
-  // ============================================================
-  // LOAD PROJECTS
-  // ============================================================
-
-  const load = async () => {
+  const loadCredits = async () => {
     try {
-      const res = await client.get("/projects");
+      setLoading(true);
+      setError("");
 
-      setProjects(res.data.projects || []);
+      const [txRes, projectRes] = await Promise.all([
+        client.get("/credits/transactions"),
+        client.get("/projects"),
+      ]);
+
+      setTransactions(txRes.data.transactions || []);
+      setProjects(projectRes.data.projects || []);
     } catch (err) {
-      console.error("Could not load projects:", err);
+      console.error(err);
 
       setError(
         err.response?.data?.message ||
-          "Could not load projects"
+          "Could not load credit registry data."
       );
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    load();
+    loadCredits();
   }, []);
 
-  // ============================================================
-  // RUN / RERUN AUTOMATED MRV
-  // ============================================================
+  const totalIssued = useMemo(() => {
+    return projects.reduce(
+      (sum, project) =>
+        sum + Number(project.creditsAmount || 0),
+      0
+    );
+  }, [projects]);
 
-  const runMrv = async (id) => {
-    setBusyId(id);
-    setError("");
-    setSuccess("");
-
-    try {
-      // Run automated MRV on backend
-      const res = await client.post(`/mrv/${id}/run`);
-
-      /*
-       * IMPORTANT:
-       *
-       * Always reload the projects from MongoDB after MRV.
-       *
-       * This ensures that the frontend receives the newest:
-       * - mrvStatus
-       * - mrvRules
-       * - satelliteItemId
-       * - satelliteAcquisitionDate
-       * - mrvReportHash
-       * - mrvIndices
-       * - verifier information
-       * - credits information
-       *
-       * Therefore browser refresh is NOT required.
-       */
-      await load();
-
-      setSuccess(
-        res.data.message ||
-          "Automated MRV completed successfully"
+  const projectCredits = useMemo(() => {
+    return [...projects]
+      .filter(
+        (project) =>
+          Number(project.creditsAmount || 0) > 0
+      )
+      .sort(
+        (a, b) =>
+          Number(b.creditsAmount || 0) -
+          Number(a.creditsAmount || 0)
       );
-    } catch (err) {
-      console.error(
-        "Automated MRV error:",
-        err
-      );
+  }, [projects]);
 
-      /*
-       * Reload even when an error occurs.
-       * This is useful if the backend updated MongoDB
-       * before returning an error.
-       */
-      try {
-        await load();
-      } catch (loadErr) {
-        console.error(
-          "Could not reload projects:",
-          loadErr
+  const totalTransactions = transactions.length;
+
+  const retiredCredits = transactions.reduce(
+    (sum, transaction) => {
+      const type = String(
+        transaction.type || ""
+      ).toLowerCase();
+
+      if (type.includes("retir")) {
+        return (
+          sum +
+          Number(
+            transaction.amount ||
+              transaction.quantity ||
+              0
+          )
         );
       }
 
-      setError(
-        err.response?.data?.message ||
-          err.message ||
-          "Automated MRV failed"
-      );
-    } finally {
-      setBusyId(null);
-    }
-  };
+      return sum;
+    },
+    0
+  );
 
-  // ============================================================
-  // VERIFIER DECISION
-  // ============================================================
-
-  const decide = async (id, approve) => {
-    setBusyId(id);
-    setError("");
-    setSuccess("");
-
-    try {
-      const note = approve
-        ? "Automated MRV passed and the verifier reviewed the submitted evidence."
-        : "Project rejected after verifier review of the submitted MRV evidence.";
-
-      const res = await client.post(
-        `/mrv/${id}/decision`,
-        {
-          approve,
-          note,
-        }
-      );
-
-      /*
-       * Reload latest project state from MongoDB.
-       */
-      await load();
-
-      setSuccess(
-        res.data.message ||
-          (approve
-            ? "Project approved"
-            : "Project rejected")
-      );
-    } catch (err) {
-      console.error(
-        "Verifier decision error:",
-        err
-      );
-
-      /*
-       * Try to synchronize UI even after an error.
-       */
-      try {
-        await load();
-      } catch (loadErr) {
-        console.error(
-          "Could not reload projects:",
-          loadErr
-        );
-      }
-
-      setError(
-        err.response?.data?.message ||
-          err.message ||
-          "Verifier decision failed"
-      );
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  // ============================================================
-  // ISSUE CREDITS
-  // ============================================================
-
-  const issue = async (id) => {
-    setBusyId(id);
-    setError("");
-    setSuccess("");
-
-    try {
-      const res = await client.post(
-        `/credits/${id}/issue`
-      );
-
-      /*
-       * Reload latest project state from MongoDB.
-       */
-      await load();
-
-      setSuccess(
-        res.data.message ||
-          "Credits issued successfully"
-      );
-    } catch (err) {
-      console.error(
-        "Credit issuance error:",
-        err
-      );
-
-      try {
-        await load();
-      } catch (loadErr) {
-        console.error(
-          "Could not reload projects:",
-          loadErr
-        );
-      }
-
-      setError(
-        err.response?.data?.message ||
-          err.message ||
-          "Credit issuance failed"
-      );
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  // ============================================================
-  // UI
-  // ============================================================
+  const activeCredits = Math.max(
+    totalIssued - retiredCredits,
+    0
+  );
 
   return (
-    <div
-      className="container"
-      style={{
-        paddingTop: 28,
-        paddingBottom: 40,
-      }}
-    >
-      <h1>
-        Monitoring, Reporting &amp; Verification
-      </h1>
+    <main className="credits-page">
+      <div className="credits-content">
 
-      <p
-        style={{
-          color: "var(--ink-soft)",
-          fontSize: 13.5,
-        }}
-      >
-        Automated MRV uses real Sentinel-2 L2A
-        B04/B08 imagery and predefined validation
-        rules. Projects that pass all automated
-        rules become Auto-Verified. Projects that
-        fail a rule are Flagged for Review and must
-        either be corrected and rerun or rejected.
-      </p>
+        {/* HEADER */}
 
-      {/* ====================================================== */}
-      {/* ERROR */}
-      {/* ====================================================== */}
+        <section className="credits-header">
+          <div>
+            <span className="credits-kicker">
+              CARBON CREDIT REGISTRY
+            </span>
 
-      {error && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: 10,
-            borderRadius: 8,
-            background:
-              "rgba(220, 38, 38, 0.08)",
-            color: "#b91c1c",
-            fontSize: 13,
-          }}
-        >
-          ❌ {error}
-        </div>
-      )}
+            <h1>
+              Credit oversight
+              <br />
+              <em>& transparency.</em>
+            </h1>
 
-      {/* ====================================================== */}
-      {/* SUCCESS */}
-      {/* ====================================================== */}
+            <p>
+              Review issued carbon credits, project
+              allocations and registry transactions.
+            </p>
+          </div>
 
-      {success && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: 10,
-            borderRadius: 8,
-            background:
-              "rgba(16, 185, 129, 0.08)",
-            color: "var(--teal-dark)",
-            fontSize: 13,
-          }}
-        >
-          ✅ {success}
-        </div>
-      )}
-
-      {/* ====================================================== */}
-      {/* PROJECTS */}
-      {/* ====================================================== */}
-
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 12,
-        }}
-      >
-        {projects.map((p) => (
-          <div
-            key={p._id}
-            className="card"
+          <button
+            className="credits-refresh"
+            onClick={loadCredits}
+            disabled={loading}
           >
-            {/* ================================================== */}
-            {/* HEADER */}
-            {/* ================================================== */}
+            <RefreshCw
+              size={15}
+              className={
+                loading ? "spin" : ""
+              }
+            />
 
-            <div
-              style={{
-                display: "flex",
-                justifyContent:
-                  "space-between",
-                alignItems:
-                  "flex-start",
-                flexWrap: "wrap",
-                gap: 8,
-              }}
-            >
+            Refresh registry
+          </button>
+        </section>
+
+        {/* ERROR */}
+
+        {error && (
+          <div className="credits-error">
+            <span>!</span>
+            {error}
+          </div>
+        )}
+
+        {/* KPI */}
+
+        <section className="credits-overview">
+
+          <CreditStat
+            icon={<Coins size={19} />}
+            label="Total issued"
+            value={totalIssued.toLocaleString()}
+            detail="tCO₂e credits"
+          />
+
+          <CreditStat
+            icon={<Activity size={19} />}
+            label="Active credits"
+            value={activeCredits.toLocaleString()}
+            detail="Available in registry"
+            positive
+          />
+
+          <CreditStat
+            icon={<CheckCircle2 size={19} />}
+            label="Retired credits"
+            value={retiredCredits.toLocaleString()}
+            detail="Permanently retired"
+          />
+
+          <CreditStat
+            icon={<ShieldCheck size={19} />}
+            label="Transactions"
+            value={totalTransactions}
+            detail="Recorded on registry"
+          />
+
+        </section>
+
+        {/* MAIN */}
+
+        <section className="credits-grid">
+
+          {/* PROJECT DISTRIBUTION */}
+
+          <div className="credits-main-card">
+            <div className="credits-card-header">
               <div>
-                <div
-                  style={{
-                    fontWeight: 600,
-                  }}
-                >
-                  {p.name}
-                </div>
+                <span className="credits-section-label">
+                  REGISTRY ALLOCATION
+                </span>
 
-                <div
-                  style={{
-                    fontSize: 12.5,
-                    color:
-                      "var(--ink-soft)",
-                  }}
-                >
-                  {p.location} ·{" "}
-                  {p.areaHa} ha
-                </div>
+                <h2>Credits by project</h2>
+
+                <p>
+                  Carbon credits currently recorded
+                  against registered projects.
+                </p>
               </div>
 
-              <StatusPill
-                status={p.mrvStatus}
-              />
+              <div className="credits-card-icon">
+                <Leaf size={19} />
+              </div>
             </div>
 
-            {/* ================================================== */}
-            {/* SATELLITE INFORMATION */}
-            {/* ================================================== */}
+            {loading ? (
+              <div className="credits-loading">
+                <RefreshCw
+                  size={18}
+                  className="spin"
+                />
+                Loading registry...
+              </div>
+            ) : projectCredits.length === 0 ? (
+              <div className="credits-empty">
+                <Coins size={23} />
 
-            {p.satelliteItemId && (
-              <div
-                style={{
-                  marginTop: 10,
-                  fontSize: 12,
-                  color:
-                    "var(--ink-soft)",
-                }}
-              >
-                Satellite scene:{" "}
+                <strong>
+                  No issued credits yet
+                </strong>
 
-                <span className="mono">
-                  {p.satelliteItemId}
+                <span>
+                  Credits will appear here after
+                  projects are approved and issued.
                 </span>
+              </div>
+            ) : (
+              <div className="credit-project-list">
+                {projectCredits.map((project) => {
+                  const amount = Number(
+                    project.creditsAmount || 0
+                  );
 
-                {p.satelliteAcquisitionDate
-                  ? ` · ${new Date(
-                      p.satelliteAcquisitionDate
-                    ).toLocaleDateString()}`
-                  : ""}
+                  const percentage =
+                    totalIssued > 0
+                      ? (amount / totalIssued) * 100
+                      : 0;
 
-                {p.mrvReportHash && (
-                  <>
-                    {" "}
-                    · MRV report CID:{" "}
-                    <span className="mono">
-                      {p.mrvReportHash}
-                    </span>
-                  </>
-                )}
+                  return (
+                    <div
+                      className="credit-project-row"
+                      key={project._id}
+                    >
+                      <div className="credit-project-icon">
+                        <Leaf size={16} />
+                      </div>
+
+                      <div className="credit-project-info">
+                        <strong>
+                          {project.name}
+                        </strong>
+
+                        <span>
+                          {project.location ||
+                            "Location unavailable"}
+                        </span>
+
+                        <div className="credit-progress">
+                          <span
+                            style={{
+                              width: `${Math.min(
+                                percentage,
+                                100
+                              )}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="credit-project-number">
+                        <strong>
+                          {amount.toLocaleString()}
+                        </strong>
+
+                        <span>tCO₂e</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
+          </div>
 
-            {/* ================================================== */}
-            {/* MRV RULES */}
-            {/* ================================================== */}
+          {/* REGISTRY SUMMARY */}
 
-            {p.mrvRules?.length > 0 && (
-              <div
-                style={{
-                  marginTop: 12,
-                  display: "grid",
-                  gridTemplateColumns:
-                    "1fr 1fr",
-                  gap: 4,
-                }}
-              >
-                {p.mrvRules.map((r) => (
-                  <div
-                    key={r.key}
-                    style={{
-                      fontSize: 12,
-                      display: "flex",
-                      gap: 6,
-                    }}
-                  >
-                    <span>
-                      {r.pass
-                        ? "✅"
-                        : "❌"}
-                    </span>
+          <aside className="credits-side-card">
 
-                    <span>
-                      {r.key}
-                    </span>
+            <div className="credits-side-icon">
+              <ShieldCheck size={22} />
+            </div>
 
-                    <span
-                      className="mono"
-                      style={{
-                        marginLeft: "auto",
-                        color:
-                          "var(--ink-soft)",
-                      }}
-                    >
-                      {r.detail}
-                    </span>
-                  </div>
-                ))}
+            <span className="credits-section-label">
+              REGISTRY STATUS
+            </span>
+
+            <h2>
+              Transparent
+              <br />
+              carbon accounting.
+            </h2>
+
+            <p>
+              Every credit recorded in the registry is
+              associated with a project and its verification
+              history.
+            </p>
+
+            <div className="credits-side-divider" />
+
+            <CreditSummary
+              label="Registered projects"
+              value={projects.length}
+            />
+
+            <CreditSummary
+              label="Issued credits"
+              value={totalIssued.toLocaleString()}
+            />
+
+            <CreditSummary
+              label="Retired credits"
+              value={retiredCredits.toLocaleString()}
+            />
+
+          </aside>
+        </section>
+
+        {/* TRANSACTIONS */}
+
+        <section className="credits-history-card">
+
+          <div className="credits-card-header">
+            <div>
+              <span className="credits-section-label">
+                ACTIVITY
+              </span>
+
+              <h2>Credit transactions</h2>
+
+              <p>
+                A transparent record of credit activity
+                across the registry.
+              </p>
+            </div>
+
+            <TrendingUp size={20} />
+          </div>
+
+          {loading ? (
+            <div className="credits-loading">
+              <RefreshCw
+                size={18}
+                className="spin"
+              />
+              Loading transactions...
+            </div>
+          ) : transactions.length === 0 ? (
+            <div className="credits-empty">
+              <Activity size={23} />
+
+              <strong>
+                No transactions recorded
+              </strong>
+
+              <span>
+                Registry activity will appear here.
+              </span>
+            </div>
+          ) : (
+            <div className="credits-table">
+
+              <div className="credits-table-head">
+                <span>TRANSACTION</span>
+                <span>PROJECT</span>
+                <span>AMOUNT</span>
+                <span>STATUS</span>
+                <span>DATE</span>
+                <span />
               </div>
-            )}
 
-            {/* ================================================== */}
-            {/* ACTIONS */}
-            {/* ================================================== */}
-
-            <div
-              style={{
-                marginTop: 12,
-                display: "flex",
-                gap: 8,
-                flexWrap: "wrap",
-                alignItems:
-                  "center",
-              }}
-            >
-
-              {/* ================================================= */}
-              {/* PENDING → RUN MRV */}
-              {/* ================================================= */}
-
-              {p.mrvStatus === "Pending" &&
-                ["verifier", "regulator"].includes(
-                  user?.role
-                ) && (
-                  <button
-                    disabled={
-                      busyId === p._id
+              {transactions.map(
+                (transaction, index) => (
+                  <CreditTransaction
+                    key={
+                      transaction._id ||
+                      transaction.id ||
+                      index
                     }
-                    onClick={() =>
-                      runMrv(p._id)
-                    }
-                    className="btn-primary"
-                    style={{
-                      fontSize: 12,
-                      padding:
-                        "7px 12px",
-                    }}
-                  >
-                    {busyId === p._id
-                      ? "Running MRV..."
-                      : "Run Automated MRV"}
-                  </button>
-                )}
-
-              {/* ================================================= */}
-              {/* FLAGGED → RERUN OR REJECT */}
-              {/* ================================================= */}
-
-              {p.mrvStatus ===
-                "Flagged for Review" &&
-                user?.role ===
-                  "verifier" && (
-                  <>
-                    {/* RERUN */}
-
-                    <button
-                      disabled={
-                        busyId === p._id
-                      }
-                      onClick={() =>
-                        runMrv(p._id)
-                      }
-                      className="btn-primary"
-                      style={{
-                        fontSize: 12,
-                        padding:
-                          "7px 12px",
-                      }}
-                    >
-                      {busyId === p._id
-                        ? "Rerunning MRV..."
-                        : "Rerun Automated MRV"}
-                    </button>
-
-                    {/* REJECT */}
-
-                    <button
-                      disabled={
-                        busyId === p._id
-                      }
-                      onClick={() =>
-                        decide(
-                          p._id,
-                          false
-                        )
-                      }
-                      className="btn-alert"
-                      style={{
-                        fontSize: 12,
-                        padding:
-                          "7px 12px",
-                      }}
-                    >
-                      {busyId === p._id
-                        ? "Processing..."
-                        : "Reject"}
-                    </button>
-
-                    <span
-                      style={{
-                        fontSize: 12,
-                        color:
-                          "var(--ink-soft)",
-                      }}
-                    >
-                      ⚠️ Automated MRV
-                      failed. Correct
-                      the evidence and
-                      rerun, or reject
-                      the project.
-                    </span>
-                  </>
-                )}
-
-              {/* ================================================= */}
-              {/* AUTO-VERIFIED → APPROVE OR REJECT */}
-              {/* ================================================= */}
-
-              {p.mrvStatus ===
-                "Auto-Verified" &&
-                user?.role ===
-                  "verifier" && (
-                  <>
-                    {/* APPROVE */}
-
-                    <button
-                      disabled={
-                        busyId === p._id
-                      }
-                      onClick={() =>
-                        decide(
-                          p._id,
-                          true
-                        )
-                      }
-                      className="btn-primary"
-                      style={{
-                        fontSize: 12,
-                        padding:
-                          "7px 12px",
-                      }}
-                    >
-                      {busyId === p._id
-                        ? "Processing..."
-                        : "Approve"}
-                    </button>
-
-                    {/* REJECT */}
-
-                    <button
-                      disabled={
-                        busyId === p._id
-                      }
-                      onClick={() =>
-                        decide(
-                          p._id,
-                          false
-                        )
-                      }
-                      className="btn-alert"
-                      style={{
-                        fontSize: 12,
-                        padding:
-                          "7px 12px",
-                      }}
-                    >
-                      {busyId === p._id
-                        ? "Processing..."
-                        : "Reject"}
-                    </button>
-                  </>
-                )}
-
-              {/* ================================================= */}
-              {/* VERIFIER APPROVED → ISSUE CREDITS */}
-              {/* ================================================= */}
-
-              {p.mrvStatus ===
-                "Verifier Approved" &&
-                !p.creditsIssued &&
-                user?.role ===
-                  "regulator" && (
-                  <button
-                    disabled={
-                      busyId === p._id
-                    }
-                    onClick={() =>
-                      issue(p._id)
-                    }
-                    className="btn-primary"
-                    style={{
-                      fontSize: 12,
-                      padding:
-                        "7px 12px",
-                    }}
-                  >
-                    {busyId === p._id
-                      ? "Issuing..."
-                      : `Issue ${
-                          Math.round(
-                            p.areaHa *
-                              RATES[
-                                p.ecosystem
-                              ]
-                          ).toLocaleString()
-                        } tCO₂e credits`}
-                  </button>
-                )}
-
-              {/* ================================================= */}
-              {/* CREDITS ISSUED */}
-              {/* ================================================= */}
-
-              {p.creditsIssued && (
-                <span
-                  style={{
-                    fontSize: 12,
-                    color:
-                      "var(--teal-dark)",
-                  }}
-                >
-                  ✅{" "}
-                  {Number(
-                    p.creditsAmount || 0
-                  ).toLocaleString()}{" "}
-                  tCO₂e credits issued
-                </span>
+                    transaction={transaction}
+                  />
+                )
               )}
 
             </div>
-          </div>
-        ))}
+          )}
+        </section>
       </div>
+    </main>
+  );
+}
+
+/* ========================================================= */
+
+function CreditStat({
+  icon,
+  label,
+  value,
+  detail,
+  positive,
+}) {
+  return (
+    <div className="credit-stat">
+      <div className="credit-stat-top">
+        <div className="credit-stat-icon">
+          {icon}
+        </div>
+
+        {positive && (
+          <span className="credit-stat-trend">
+            <TrendingUp size={12} />
+          </span>
+        )}
+      </div>
+
+      <span>{label}</span>
+
+      <strong>{value}</strong>
+
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+/* ========================================================= */
+
+function CreditSummary({ label, value }) {
+  return (
+    <div className="credit-summary-row">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+/* ========================================================= */
+
+function CreditTransaction({
+  transaction,
+}) {
+  const type =
+    transaction.type ||
+    transaction.action ||
+    "Credit activity";
+
+  const amount = Number(
+    transaction.amount ||
+      transaction.quantity ||
+      0
+  );
+
+  const project =
+    transaction.project?.name ||
+    transaction.projectName ||
+    "Registry transaction";
+
+  const date = transaction.createdAt
+    ? new Date(
+        transaction.createdAt
+      ).toLocaleDateString()
+    : "—";
+
+  return (
+    <div className="credit-transaction-row">
+
+      <div className="transaction-type">
+        <div>
+          <Coins size={15} />
+        </div>
+
+        <strong>{type}</strong>
+      </div>
+
+      <span className="transaction-project">
+        {project}
+      </span>
+
+      <strong className="transaction-amount">
+        {amount.toLocaleString()} tCO₂e
+      </strong>
+
+      <span className="transaction-status">
+        <span />
+        Recorded
+      </span>
+
+      <span className="transaction-date">
+        {date}
+      </span>
+
+      <button className="transaction-more">
+        <MoreHorizontal size={16} />
+      </button>
     </div>
   );
 }
